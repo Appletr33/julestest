@@ -1,40 +1,38 @@
-#version 450
-layout (local_size_x = 16, local_size_y = 16) in;
-
-layout(binding = 0) buffer OutputBuffer {
-    vec4 pixels[];
-};
+[[vk::binding(0)]]
+RWStructuredBuffer<float4> pixels;
 
 struct Sphere {
-    vec4 centerAndRadius; // xyz = center, w = radius
-    vec4 colorAndReflectivity; // xyz = color, w = reflectivity
+    float4 centerAndRadius; // xyz = center, w = radius
+    float4 colorAndReflectivity; // xyz = color, w = reflectivity
 };
 
-layout(binding = 1) buffer SceneBuffer {
-    Sphere spheres[];
-};
+[[vk::binding(1)]]
+StructuredBuffer<Sphere> spheres;
 
-layout(push_constant) uniform PushConstants {
+struct PushConstants {
     uint width;
     uint height;
     uint num_spheres;
-    float padding; // keep vec4 alignment
-    vec4 cameraPos; // xyz = pos, w = unused
-} pcs;
+    float padding; // keep float4 alignment
+    float4 cameraPos; // xyz = pos, w = unused
+};
+
+[[vk::push_constant]]
+ConstantBuffer<PushConstants> pcs;
 
 struct Ray {
-    vec3 origin;
-    vec3 dir;
+    float3 origin;
+    float3 dir;
 };
 
 struct Hit {
     float t;
-    vec3 normal;
+    float3 normal;
     int sphereIndex;
 };
 
-Hit intersectSphere(Ray ray, vec3 center, float radius, int index) {
-    vec3 oc = ray.origin - center;
+Hit intersectSphere(Ray ray, float3 center, float radius, int index) {
+    float3 oc = ray.origin - center;
     float a = dot(ray.dir, ray.dir);
     float b = 2.0 * dot(oc, ray.dir);
     float c = dot(oc, oc) - radius * radius;
@@ -67,9 +65,10 @@ Hit intersectScene(Ray ray) {
     Hit closestHit;
     closestHit.t = 1000000.0;
     closestHit.sphereIndex = -1;
+    closestHit.normal = float3(0.0);
 
     for (int i = 0; i < pcs.num_spheres; ++i) {
-        vec3 center = spheres[i].centerAndRadius.xyz;
+        float3 center = spheres[i].centerAndRadius.xyz;
         float radius = spheres[i].centerAndRadius.w;
         Hit hit = intersectSphere(ray, center, radius, i);
         if (hit.t > 0.0 && hit.t < closestHit.t) {
@@ -82,7 +81,7 @@ Hit intersectScene(Ray ray) {
         float t = -ray.origin.y / ray.dir.y;
         if (t > 0.001 && t < closestHit.t) {
             closestHit.t = t;
-            closestHit.normal = vec3(0.0, 1.0, 0.0);
+            closestHit.normal = float3(0.0, 1.0, 0.0);
             closestHit.sphereIndex = -2; // Ground
         }
     }
@@ -90,9 +89,9 @@ Hit intersectScene(Ray ray) {
     return closestHit;
 }
 
-vec3 trace(Ray startRay) {
-    vec3 color = vec3(0.0);
-    vec3 attenuation = vec3(1.0);
+float3 trace(Ray startRay) {
+    float3 color = float3(0.0);
+    float3 attenuation = float3(1.0);
     Ray currentRay = startRay;
 
     for (int bounce = 0; bounce < 3; ++bounce) {
@@ -100,24 +99,24 @@ vec3 trace(Ray startRay) {
 
         if (hit.sphereIndex == -1) {
             // Background color (sky)
-            vec3 unit_direction = normalize(currentRay.dir);
+            float3 unit_direction = normalize(currentRay.dir);
             float t = 0.5 * (unit_direction.y + 1.0);
-            vec3 skyColor = (1.0 - t) * vec3(1.0, 1.0, 1.0) + t * vec3(0.5, 0.7, 1.0);
+            float3 skyColor = (1.0 - t) * float3(1.0, 1.0, 1.0) + t * float3(0.5, 0.7, 1.0);
             color += attenuation * skyColor;
             break;
         }
 
-        vec3 hitPoint = currentRay.origin + currentRay.dir * hit.t;
-        vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0));
+        float3 hitPoint = currentRay.origin + currentRay.dir * hit.t;
+        float3 lightDir = normalize(float3(1.0, 1.0, 1.0));
         float diff = max(dot(hit.normal, lightDir), 0.0);
 
-        vec3 surfaceColor;
+        float3 surfaceColor;
         float reflectivity = 0.0;
 
         if (hit.sphereIndex == -2) {
             // Ground
-            float checker = mod(floor(hitPoint.x * 0.5) + floor(hitPoint.z * 0.5), 2.0);
-            surfaceColor = checker < 1.0 ? vec3(0.2) : vec3(0.8);
+            float checker = fmod(floor(hitPoint.x * 0.5) + floor(hitPoint.z * 0.5), 2.0);
+            surfaceColor = checker < 1.0 ? float3(0.2) : float3(0.8);
             reflectivity = 0.3; // slightly reflective ground
         } else {
             surfaceColor = spheres[hit.sphereIndex].colorAndReflectivity.xyz;
@@ -125,7 +124,7 @@ vec3 trace(Ray startRay) {
         }
 
         // Ambient + Diffuse
-        vec3 directLighting = surfaceColor * (diff * 0.8 + 0.2);
+        float3 directLighting = surfaceColor * (diff * 0.8 + 0.2);
 
         // Add color proportional to non-reflected part
         color += attenuation * directLighting * (1.0 - reflectivity);
@@ -139,9 +138,11 @@ vec3 trace(Ray startRay) {
     return color;
 }
 
-void main() {
-    uint x = gl_GlobalInvocationID.x;
-    uint y = gl_GlobalInvocationID.y;
+[shader("compute")]
+[numthreads(16, 16, 1)]
+void main(uint3 dispatchThreadID : SV_DispatchThreadID) {
+    uint x = dispatchThreadID.x;
+    uint y = dispatchThreadID.y;
 
     if (x >= pcs.width || y >= pcs.height) {
         return;
@@ -155,7 +156,7 @@ void main() {
     float fov = 1.0;
     float aspect = float(pcs.width) / float(pcs.height);
 
-    vec3 rayDir = normalize(vec3(
+    float3 rayDir = normalize(float3(
         u * aspect * fov,
         v * fov,
         -1.0
@@ -163,7 +164,7 @@ void main() {
 
     // Top-down camera setup
     // Rotate ray direction to look down from top
-    vec3 rotatedDir;
+    float3 rotatedDir;
     rotatedDir.x = rayDir.x;
     rotatedDir.y = rayDir.z; // mapped from -Z
     rotatedDir.z = -rayDir.y; // mapped from -Y -> down is negative Z after mapping?
@@ -178,11 +179,11 @@ void main() {
     ray.origin = pcs.cameraPos.xyz;
     ray.dir = rotatedDir;
 
-    vec3 color = trace(ray);
+    float3 color = trace(ray);
 
     // simple gamma correction
-    color = pow(color, vec3(1.0 / 2.2));
+    color = pow(color, float3(1.0 / 2.2));
 
     uint index = y * pcs.width + x;
-    pixels[index] = vec4(color, 1.0);
+    pixels[index] = float4(color, 1.0);
 }
