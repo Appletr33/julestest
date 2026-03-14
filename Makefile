@@ -5,8 +5,10 @@ LDFLAGS = -lvulkan
 GLSLC = glslc
 
 TARGET = raytracer
-SHADER = raytracer.comp
+SHADER = raytracer.slang
 SHADER_SPV = raytracer.spv
+
+SLANGC = slangc
 
 all: $(TARGET) $(SHADER_SPV)
 
@@ -14,7 +16,7 @@ $(TARGET): main.cpp
 	$(CXX) $(CXXFLAGS) main.cpp -o $(TARGET) $(LDFLAGS)
 
 $(SHADER_SPV): $(SHADER)
-	$(GLSLC) $(SHADER) -o $(SHADER_SPV)
+	$(SLANGC) $(SHADER) -target spirv -o $(SHADER_SPV)
 
 run: all
 	./$(TARGET)
